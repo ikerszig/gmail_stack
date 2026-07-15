@@ -20,13 +20,16 @@ services:
     build: ./mbsync
     container_name: gmail_stack_mbsync
     restart: unless-stopped
+    # Must match Dovecot's userdb uid/gid (dovecot/conf/dovecot.conf) so the
+    # Maildir files it writes are actually readable by Dovecot.
+    user: "1000:1000"
     networks:
       - gmail_stack_net
     environment:
       SYNC_INTERVAL_SECONDS: "900"
     volumes:
       - /srv/gmail_stack/data/maildir:/srv/mail/maildir
-      - ./mbsync/conf/.mbsyncrc:/root/.mbsyncrc:ro
+      - ./mbsync/conf/.mbsyncrc:/etc/mbsyncrc:ro
     depends_on:
       - dovecot
 

@@ -12,6 +12,7 @@ services:
       - "192.168.1.25:993:993"
     volumes:
       - /srv/gmail_stack/data/maildir:/srv/mail/maildir
+      - ./dovecot/conf/dovecot.conf:/etc/dovecot/dovecot.conf:ro
       - ./dovecot/conf/passwd:/etc/dovecot/passwd:ro
       - /etc/letsencrypt/live/ikermail.ddns.net:/etc/letsencrypt/live/ikermail.ddns.net:ro
       - /etc/letsencrypt/archive/ikermail.ddns.net:/etc/letsencrypt/archive/ikermail.ddns.net:ro

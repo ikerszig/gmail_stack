@@ -1,0 +1,32 @@
+# Copy this file to mbsync/conf/.mbsyncrc and fill in the real values.
+# That copy is gitignored — never commit it.
+#
+# App Password: https://myaccount.google.com/apppasswords
+# (requires 2FA enabled on the Google account; a plain account password
+# will NOT work here, Google requires an App Password for IMAP.)
+
+IMAPAccount gmail
+Host imap.gmail.com
+User REPLACE_WITH_GMAIL_ADDRESS@gmail.com
+Pass "REPLACE_WITH_APP_PASSWORD"
+SSLType IMAPS
+AuthMechs LOGIN
+
+IMAPStore gmail-remote
+Account gmail
+
+MaildirStore gmail-local
+Path /srv/mail/maildir/REPLACE_WITH_GMAIL_ADDRESS@gmail.com/
+Inbox /srv/mail/maildir/REPLACE_WITH_GMAIL_ADDRESS@gmail.com/INBOX
+SubFolders Verbatim
+
+Channel gmail
+Far :gmail-remote:
+Near :gmail-local:
+# Skip Gmail's virtual "All Mail"/"Important"/"Starred" views — they
+# duplicate messages that already exist in real labels/folders.
+Patterns * !"[Gmail]/All Mail" !"[Gmail]/Important" !"[Gmail]/Starred"
+Create Near
+SyncState *
+# One-directional mirror: never push local changes back to Gmail.
+Sync Pull

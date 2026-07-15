@@ -1,0 +1,15 @@
+# Secrets - never commit real credentials
+secrets/*.env
+secrets/*.token
+secrets/*.json
+!secrets/README.md
+
+# Generated auth/config files with real credentials
+dovecot/conf/passwd
+radicale/conf/users
+mbsync/conf/.mbsyncrc
+vdirsyncer/conf/config
+
+# Local data volumes if ever bind-mounted under the repo during local testing
+data/
+*.log

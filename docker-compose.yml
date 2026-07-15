@@ -1,0 +1,85 @@
+services:
+  dovecot:
+    build: ./dovecot
+    container_name: gmail_stack_dovecot
+    restart: unless-stopped
+    networks:
+      gmail_stack_net:
+        ipv4_address: 172.28.0.10
+    # Bound to the LAN interface IP only — never published on tun0/other
+    # interfaces, regardless of what nftables rules exist. See README.md.
+    ports:
+      - "192.168.1.25:993:993"
+    volumes:
+      - /srv/gmail_stack/data/maildir:/srv/mail/maildir
+      - ./dovecot/conf/passwd:/etc/dovecot/passwd:ro
+      - /etc/letsencrypt/live/ikermail.ddns.net:/etc/letsencrypt/live/ikermail.ddns.net:ro
+      - /etc/letsencrypt/archive/ikermail.ddns.net:/etc/letsencrypt/archive/ikermail.ddns.net:ro
+
+  mbsync-sync:
+    build: ./mbsync
+    container_name: gmail_stack_mbsync
+    restart: unless-stopped
+    networks:
+      - gmail_stack_net
+    environment:
+      SYNC_INTERVAL_SECONDS: "900"
+    volumes:
+      - /srv/gmail_stack/data/maildir:/srv/mail/maildir
+      - ./mbsync/conf/.mbsyncrc:/root/.mbsyncrc:ro
+    depends_on:
+      - dovecot
+
+  radicale:
+    image: tomsquest/docker-radicale:latest
+    container_name: gmail_stack_radicale
+    restart: unless-stopped
+    networks:
+      gmail_stack_net:
+        ipv4_address: 172.28.0.20
+    user: "1000:1000"
+    volumes:
+      - /srv/gmail_stack/data/radicale:/data
+      - ./radicale/conf/config:/config/config:ro
+      - ./radicale/conf/users:/config/users:ro
+
+  vdirsyncer-sync:
+    build: ./vdirsyncer
+    container_name: gmail_stack_vdirsyncer
+    restart: unless-stopped
+    networks:
+      - gmail_stack_net
+    environment:
+      SYNC_INTERVAL_SECONDS: "900"
+    volumes:
+      - ./vdirsyncer/conf:/root/.vdirsyncer
+    depends_on:
+      - radicale
+
+  roundcube:
+    image: roundcube/roundcubemail:latest
+    container_name: gmail_stack_roundcube
+    restart: unless-stopped
+    networks:
+      gmail_stack_net:
+        ipv4_address: 172.28.0.30
+    environment:
+      ROUNDCUBEMAIL_DB_TYPE: sqlite
+      ROUNDCUBEMAIL_SKIN: elastic
+      ROUNDCUBEMAIL_DEFAULT_HOST: tls://dovecot
+      ROUNDCUBEMAIL_DEFAULT_PORT: "993"
+      ROUNDCUBEMAIL_SMTP_SERVER: ""
+      # Verify these env var names against the image's current docs
+      # (roundcube/roundcubemail on Docker Hub) at deploy time — they
+      # occasionally get renamed between image versions.
+    volumes:
+      - /srv/gmail_stack/data/roundcube-db:/var/roundcube/db
+    depends_on:
+      - dovecot
+
+networks:
+  gmail_stack_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

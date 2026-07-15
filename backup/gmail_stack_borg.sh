@@ -1,22 +1,65 @@
 #!/bin/sh
-# Copy to /root/backup/modules/gmail_stack_borg.sh on the raspi.
-# Modeled on the existing syncthing_borg.sh module — same remote host,
-# same retention policy, same shared passphrase file. Picked up
-# automatically by the main system_backup.sh (globs modules/*.sh).
+# ==========================================
+# gmail_stack Borg Backup - DATA + STACK CONFIG
+# Compatible with sh (dash). Minta: syncthing_borg.sh
+# ==========================================
 
-set -eu
+BASE_LOCAL_BACKUP_DIR="$1"
+TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 
-BORG_REPO="ssh://ikerszig@192.168.1.201/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
-export BORG_PASSPHRASE_FILE="/root/backup/.borg_passphrase"
+REMOTE_USER="ikerszig"
+REMOTE_HOST="192.168.1.201"
+BASE_REMOTE_BACKUP_DIR="/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
 
-# First run on a fresh remote host: borg init --encryption=repokey-blake2 "$BORG_REPO"
+REPO="ssh://${REMOTE_USER}@${REMOTE_HOST}${BASE_REMOTE_BACKUP_DIR}"
 
-borg create \
-    --stats --compression zstd \
-    "$BORG_REPO::gmail_stack-{now:%Y-%m-%d_%H%M%S}" \
-    /srv/gmail_stack/data \
-    /opt/stacks/gmail_stack
+export BORG_PASSPHRASE="$(cat /root/backup/.borg_passphrase)"
 
-borg prune \
-    --keep-daily 7 --keep-weekly 4 --keep-monthly 6 \
-    "$BORG_REPO"
+GMAIL_STACK_DATA="/srv/gmail_stack/data"
+GMAIL_STACK_CONFIG="/opt/stacks/gmail_stack"
+
+ERROR_COUNT=0
+record_error() { ERROR_COUNT=$((ERROR_COUNT + 1)); echo "ERROR: $1"; }
+
+ensure_repo() {
+    echo "[INFO] Checking Borg repository..."
+    if ! borg info "$REPO" > /dev/null 2>&1; then
+        echo "[INFO] Repository does not exist. Creating..."
+        ssh "${REMOTE_USER}@${REMOTE_HOST}" "mkdir -p ${BASE_REMOTE_BACKUP_DIR}" \
+            || record_error "Failed to create remote Borg directory"
+        borg init --encryption=repokey "$REPO" \
+            || record_error "Cannot initialize Borg repository"
+    else
+        echo "[INFO] Repository exists."
+    fi
+}
+
+check_repo_health() {
+    echo "[INFO] Checking Borg repository health..."
+    borg check "$REPO" || record_error "Borg repository check failed"
+}
+
+prune_old_backups() {
+    echo "[INFO] Pruning (keep-daily 7, keep-weekly 4, keep-monthly 6)..."
+    borg prune -v --list "$REPO" --keep-daily 7 --keep-weekly 4 --keep-monthly 6 || record_error "Failed to prune old backups"
+}
+
+backup_gmail_stack() {
+    echo "[INFO] Backing up gmail_stack data + config ($GMAIL_STACK_DATA, $GMAIL_STACK_CONFIG)..."
+    borg create --compression lz4 \
+        "$REPO::gmail_stack-$TIMESTAMP" "$GMAIL_STACK_DATA" "$GMAIL_STACK_CONFIG" \
+        || record_error "Failed to backup gmail_stack"
+}
+
+echo "=== gmail_stack Borg Backup Started: $TIMESTAMP ==="
+ensure_repo
+check_repo_health
+backup_gmail_stack
+prune_old_backups
+echo "=== gmail_stack Borg Backup Finished: $TIMESTAMP ==="
+
+if [ "$ERROR_COUNT" -gt 0 ]; then
+    echo "SUMMARY: Errors occurred ($ERROR_COUNT)"; exit 1
+else
+    echo "SUMMARY: Backup completed successfully"; exit 0
+fi

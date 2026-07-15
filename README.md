@@ -94,13 +94,18 @@ sudo cp backup/gmail_stack_borg.sh /root/backup/modules/gmail_stack_borg.sh
 sudo chmod +x /root/backup/modules/gmail_stack_borg.sh
 ```
 
-Első futtatáskor, ha a távoli repo még nem létezik:
+A script a `syncthing_borg.sh` mintáját követi: ha a távoli repo még nem
+létezik, `ensure_repo()` automatikusan létrehozza (`borg init`), nincs külön
+manuális lépés. A fő `system_backup.sh` a `modules/*.sh` glob alapján
+automatikusan felveszi, `sh gmail_stack_borg.sh <local_backup_dir>` formában
+hívja meg (a helyi staging dir argumentumot a script nem használja, csak a
+konzisztencia miatt kapja meg, mint a többi modul).
+
+Egyszeri próbafuttatás a cronra várás nélkül:
 
 ```sh
-borg init --encryption=repokey-blake2 ssh://ikerszig@192.168.1.201/home/ikerszig/RaspiSystemBackups/gmail_stack_borg
+sudo sh /root/backup/modules/gmail_stack_borg.sh /home/backup/SystemBackups
 ```
-
-A fő `system_backup.sh` a `modules/*.sh` glob alapján automatikusan felveszi.
 
 ### 9. Kliens-oldali névfeloldás
 

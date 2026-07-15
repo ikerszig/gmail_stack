@@ -1,32 +1,26 @@
 # Copy to /etc/apache2/sites-available/ikermail.ddns.net.conf on the raspi,
-# then: a2ensite ikermail.ddns.net && systemctl reload apache2
+# then: a2ensite ikermail.ddns.net && apache2ctl configtest && systemctl reload apache2
 #
-# Modeled on the existing ikersync.ddns.net vhost, plus one addition:
+# Modeled on the existing ikersync.ddns.net vhost (same IfModule wrapper,
+# X-Forwarded-* headers, options-ssl-apache.conf include), plus one addition:
 # this domain must NOT be reachable from outside the LAN, even though
 # Apache shares port 80/443 with other (internet-facing) vhosts on this
-# host. `Require ip` enforces that at the application layer — anyone
-# outside 192.168.1.0/24 gets a 403, independent of router/firewall state.
-#
-# Needs: mod_proxy, mod_proxy_http, mod_headers, mod_authz_core (all
-# standard, likely already enabled for the other vhosts on this host).
-#
-# The :80 vhost / redirect-to-https / certbot renewal wiring should follow
-# whatever pattern the existing domains already use on this host — not
-# duplicated here since it's already established and working.
+# host, and the firewall's HU-geoip allow rule is not scoped by port.
+# `Require ip` enforces LAN-only at the application layer — anyone outside
+# 192.168.1.0/24 gets a 403, independent of firewall/router state.
 
+<IfModule mod_ssl.c>
 <VirtualHost *:443>
     ServerName ikermail.ddns.net
-
-    SSLEngine on
-    SSLCertificateFile /etc/letsencrypt/live/ikermail.ddns.net/fullchain.pem
-    SSLCertificateKeyFile /etc/letsencrypt/live/ikermail.ddns.net/privkey.pem
 
     <Location />
         Require ip 192.168.1.0/24
     </Location>
 
-    # Roundcube webmail under /mail
     ProxyPreserveHost On
+    ProxyTimeout 300
+
+    # Roundcube webmail under /mail
     ProxyPass /mail/ http://172.28.0.30:80/
     ProxyPassReverse /mail/ http://172.28.0.30:80/
 
@@ -37,4 +31,12 @@
     <Location /radicale/>
         RequestHeader set X-Script-Name /radicale
     </Location>
+
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Port  "443"
+
+    SSLCertificateFile /etc/letsencrypt/live/ikermail.ddns.net/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/ikermail.ddns.net/privkey.pem
+    Include /etc/letsencrypt/options-ssl-apache.conf
 </VirtualHost>
+</IfModule>

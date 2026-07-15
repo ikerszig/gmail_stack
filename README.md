@@ -8,6 +8,15 @@ Borg-backup rendszerbe van bekötve.
 Fut: raspi (`ssh raspi`, LAN IP `192.168.1.25`), ugyanazon a gépen, ahol a
 Syncthing Docker-stack is fut, ugyanazokat a konvenciókat követve.
 
+## Állapot (2026-07-16)
+
+Telepítve és fut a raspi-n. Kész: repo `/opt/stacks/gmail_stack`, adat
+`/srv/gmail_stack/data`, LE cert, Dovecot+Radicale lokális fiókok, mind az öt
+konténer fut, Gmail-szinkron folyamatban (első teljes lehúzás), Apache vhost
+(LAN-only), Borg backup bekötve+tesztelve, `ikerszig_save@ikermail.ddns.net`
+tároló-fiók létrehozva. **Hátra:** Google Calendar OAuth (5. lépés), kliens
+hosts-bejegyzés + végpont-ellenőrzés (9. lépés).
+
 ## Architektúra
 
 | Szolgáltatás | Szerep |
@@ -120,6 +129,24 @@ elérnéd a `ikermail.ddns.net`-et, vegyél fel egy hosts-bejegyzést:
 Androidon root vagy egy helyi DNS-app kell hozzá — ha ez túl macerás, a
 mail/naptár kliensben megadhatod közvetlenül a `192.168.1.25` IP-t is,
 cserébe a TLS-kliens hostname-mismatch figyelmeztetést dobhat.)
+
+## Extra tároló-fiók (nem Gmail-mirror)
+
+A `dovecot/conf/passwd`-ben a Gmail-mirror fiók mellett létezik egy külön
+tároló-postafiók: `ikerszig_save@ikermail.ddns.net`. Ez NEM szinkronizál
+sehonnan — üres IMAP-fiók, ahová kézzel (a mail-kliensből áthúzva / IMAP
+APPEND-del) pakolhatók a megőrzendő levelek/adatok. Nincs SMTP, tehát csak
+tárolásra/fogadásra való, küldésre nem. A postafiókja
+`/srv/gmail_stack/data/maildir/ikerszig_save@ikermail.ddns.net` alatt van,
+így a Borg-mentés (ami a teljes `/srv/gmail_stack/data`-t viszi)
+automatikusan lementi — nincs külön teendő.
+
+Új fiók felvétele később: hash generálása
+`docker compose exec dovecot doveadm pw -s SHA512-CRYPT`, a
+`user:hash` sor hozzáfűzése a `dovecot/conf/passwd`-hez, majd a
+`/srv/gmail_stack/data/maildir/<user>/{cur,new,tmp}` létrehozása
+`chown 1000:1000`-rel. Dovecot-restart nem kell (passwd-file minden auth-nál
+újraolvasva).
 
 ## Ellenőrzés
 

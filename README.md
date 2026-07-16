@@ -27,6 +27,9 @@ hosts-bejegyzés + végpont-ellenőrzés (9. lépés).
 | `vdirsyncer-sync` | Google Calendar → Radicale egyirányú szinkron 15 percenként |
 | `roundcube` | webmail UI, Apache mögött `/mail` alatt |
 
+Monitoring: Zabbix UserParameters a sync-élettartamhoz és a Borg-egészséghez,
+lásd `monitoring/` (root cron gyűjt → agent olvas).
+
 `ikermail.ddns.net` egyetlen domain, Apache vhost mögött, de **csak LAN-ról
 (192.168.1.0/24)** érhető el — a raspi Apache-ja más domainekhez már
 megosztva használja a 80/443-at, ezért az elérés-korlátozás a vhost szintjén

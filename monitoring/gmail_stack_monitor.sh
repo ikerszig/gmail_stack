@@ -42,6 +42,15 @@ sync_fail=$(docker logs --tail 60 gmail_stack_mbsync 2>&1 | grep -c "sync failed
 vdirsyncer_age_min=$(sync_age gmail_stack_vdirsyncer)
 vdirsyncer_fail=$(docker logs --tail 60 gmail_stack_vdirsyncer 2>&1 | grep -c "sync failed" || true)
 
+# --- mailbox sizes (bytes) for trend graphs / sudden-drop alerting ---
+maildir_bytes() {
+  [ -d "$1" ] && du -sb "$1" 2>/dev/null | cut -f1 || echo 0
+}
+maildir_size_main=$(maildir_bytes "/srv/gmail_stack/data/maildir/ikerszig@gmail.com")
+maildir_size_save=$(maildir_bytes "/srv/gmail_stack/data/maildir/ikerszig_save@ikermail.ddns.net")
+[ -z "$maildir_size_main" ] && maildir_size_main=0
+[ -z "$maildir_size_save" ] && maildir_size_save=0
+
 # --- newest borg archive age (hours), cached so a transient borg/ssh
 #     hiccup keeps the last-known-good value instead of a false -1 ---
 export BORG_PASSPHRASE="$(cat /root/backup/.borg_passphrase 2>/dev/null || true)"
@@ -76,6 +85,8 @@ fi
   echo "sync_fail $sync_fail"
   echo "vdirsyncer_age_min $vdirsyncer_age_min"
   echo "vdirsyncer_fail $vdirsyncer_fail"
+  echo "maildir_size_main $maildir_size_main"
+  echo "maildir_size_save $maildir_size_save"
   echo "borg_age_hours $borg_age_hours"
   echo "borg_check_result ${borg_check_result:--1}"
   echo "borg_check_age_days ${borg_check_age_days:--1}"

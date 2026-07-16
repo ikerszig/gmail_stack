@@ -23,17 +23,24 @@ running() {
 }
 sync_running=$(running gmail_stack_mbsync)
 dovecot_running=$(running gmail_stack_dovecot)
+vdirsyncer_running=$(running gmail_stack_vdirsyncer)
 
-# --- minutes since last mbsync "sync start" (loop heartbeat) ---
-sync_age_min=-1
-last=$(docker logs --tail 400 gmail_stack_mbsync 2>&1 | grep "sync start:" | tail -1 | sed -E 's/.*sync start: //')
-if [ -n "$last" ]; then
-  e=$(date -d "$last" +%s 2>/dev/null || true)
-  [ -n "$e" ] && sync_age_min=$(( (now - e) / 60 ))
-fi
+# minutes since a container's last "sync start" loop heartbeat, from its logs
+sync_age() {
+  _l=$(docker logs --tail 400 "$1" 2>&1 | grep "sync start:" | tail -1 | sed -E 's/.*sync start: //')
+  [ -z "$_l" ] && { echo -1; return; }
+  _e=$(date -d "$_l" +%s 2>/dev/null || true)
+  [ -z "$_e" ] && { echo -1; return; }
+  echo $(( (now - _e) / 60 ))
+}
 
-# --- recent sync failures (App Password revoked, network, etc.) ---
+# --- mbsync (Gmail) sync heartbeat + recent failures ---
+sync_age_min=$(sync_age gmail_stack_mbsync)
 sync_fail=$(docker logs --tail 60 gmail_stack_mbsync 2>&1 | grep -c "sync failed" || true)
+
+# --- vdirsyncer (Calendar) sync heartbeat + recent failures ---
+vdirsyncer_age_min=$(sync_age gmail_stack_vdirsyncer)
+vdirsyncer_fail=$(docker logs --tail 60 gmail_stack_vdirsyncer 2>&1 | grep -c "sync failed" || true)
 
 # --- newest borg archive age (hours), cached so a transient borg/ssh
 #     hiccup keeps the last-known-good value instead of a false -1 ---
@@ -64,8 +71,11 @@ fi
   echo "updated $now"
   echo "sync_running $sync_running"
   echo "dovecot_running $dovecot_running"
+  echo "vdirsyncer_running $vdirsyncer_running"
   echo "sync_age_min $sync_age_min"
   echo "sync_fail $sync_fail"
+  echo "vdirsyncer_age_min $vdirsyncer_age_min"
+  echo "vdirsyncer_fail $vdirsyncer_fail"
   echo "borg_age_hours $borg_age_hours"
   echo "borg_check_result ${borg_check_result:--1}"
   echo "borg_check_age_days ${borg_check_age_days:--1}"

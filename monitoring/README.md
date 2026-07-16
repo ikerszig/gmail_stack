@@ -40,8 +40,11 @@ Type **Zabbix agent** (passive), numeric (unsigned/float), update interval 5m:
 |---|---|
 | `gmail_stack.sync_running` | mbsync container up (1/0) |
 | `gmail_stack.dovecot_running` | Dovecot container up (1/0) |
-| `gmail_stack.sync_age_min` | minutes since last sync loop start |
-| `gmail_stack.sync_fail` | count of recent "sync failed" log lines |
+| `gmail_stack.vdirsyncer_running` | vdirsyncer (Calendar) container up (1/0) |
+| `gmail_stack.sync_age_min` | minutes since last mbsync loop start |
+| `gmail_stack.sync_fail` | count of recent mbsync "sync failed" log lines |
+| `gmail_stack.vdirsyncer_age_min` | minutes since last vdirsyncer loop start |
+| `gmail_stack.vdirsyncer_fail` | count of recent vdirsyncer "sync failed" log lines |
 | `gmail_stack.borg_age_hours` | age of newest Borg archive (hours) |
 | `gmail_stack.borg_check` | last integrity check: 0 ok / 1 fail / -1 never |
 | `gmail_stack.borg_check_age` | days since last integrity check |
@@ -54,6 +57,10 @@ Type **Zabbix agent** (passive), numeric (unsigned/float), update interval 5m:
   (loop runs ~every 30 min; >90 min = stuck/dead)
 - **Sync failing** (AVG): `last(/HOST/gmail_stack.sync_fail)>2`
   (repeated failures — likely revoked App Password)
+- **Calendar sync down** (WARN): `last(/HOST/gmail_stack.vdirsyncer_running)=0`
+- **Calendar sync stale** (WARN): `last(/HOST/gmail_stack.vdirsyncer_age_min)>90`
+- **Calendar sync failing** (AVG): `last(/HOST/gmail_stack.vdirsyncer_fail)>2`
+  (repeated failures — likely expired OAuth token)
 - **Backup stale** (HIGH): `last(/HOST/gmail_stack.borg_age_hours)>26`
   (nightly backup at 22:00 → should always be <26h)
 - **Borg integrity fail** (HIGH): `last(/HOST/gmail_stack.borg_check)=1`

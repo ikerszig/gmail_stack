@@ -116,19 +116,32 @@ Egyszeri próbafuttatás a cronra várás nélkül:
 sudo sh /root/backup/modules/gmail_stack_borg.sh /home/backup/SystemBackups
 ```
 
-### 9. Kliens-oldali névfeloldás
+### 9. Kliens-oldali elérés (a ténylegesen alkalmazott megoldás)
 
-Mivel nincs Pi-hole a hálózaton, minden eszközön (telefon, laptop), ahonnan
-elérnéd a `ikermail.ddns.net`-et, vegyél fel egy hosts-bejegyzést:
+Nincs Pi-hole/helyi DNS a hálózaton, és a router sem tud helyi DNS-bejegyzést —
+csak WAN port-forwardot. Ezért a végső megoldás **993-forward + tűzfal
+source-IP szűrés**, NEM hosts-bejegyzés:
 
-```
-192.168.1.25   ikermail.ddns.net
-```
+- **Router:** `WAN 993 → 192.168.1.25:993` port-forward.
+- **Tűzfal:** a `tcp dport 993 drop` szabály (a LAN-accept után, a geoip-allow
+  előtt) a nem-LAN forgalmat eldobja. Lásd `firewall/nftables-snippet.md`.
 
-(Windows: `C:\Windows\System32\drivers\etc\hosts`, admin jogosultsággal.
-Androidon root vagy egy helyi DNS-app kell hozzá — ha ez túl macerás, a
-mail/naptár kliensben megadhatod közvetlenül a `192.168.1.25` IP-t is,
-cserébe a TLS-kliens hostname-mismatch figyelmeztetést dobhat.)
+Így a kliens a `ikermail.ddns.net`-et a publikus IP-re oldja fel, és:
+- **Otthoni WiFi-n:** a router NAT-hairpinje visszafordítja a Dovecothoz, a
+  raspi **LAN forrás-IP-t** lát (router `.1` vagy az eszköz `.x`), a tűzfal
+  átengedi, a cert a névre szól → működik, hosts/DNS/root nélkül, mobilon is.
+- **Otthoni WiFi-n kívül (mobilnet):** a forrás valós internetes IP → a tűzfal
+  eldobja → nem elérhető. A "csak LAN source" és a "mobilneten is menjen"
+  egymást kizárja; ez a tudatos kompromisszum (LAN-only marad).
+
+**Avast/AV buktató (Windows):** ha a kliensgépen fut Avast (vagy hasonló AV)
+Mail/Web Shield SSL-szkenneléssel, az MITM-eli az IMAPS-kapcsolatot és a saját
+gyökér-certjét tolja be — a Thunderbird ezt (főleg ha az AV nem éri el az
+upstream szervert, pl. forward nélkül) elutasíthatja "jelszó-kérés nélkül".
+Megoldás: Avast → Core Shields → Web/Mail Shield → HTTPS/SSL scanning kikapcs,
+VAGY hagyd bekapcsolva (az Avast a saját gyökeret a Thunderbird NSS-tárába is
+beinjektálja, így általában megbízik benne). A forward megléte önmagában is
+sokat javít, mert az AV így validálni tudja a valódi certet.
 
 ## Extra tároló-fiók (nem Gmail-mirror)
 

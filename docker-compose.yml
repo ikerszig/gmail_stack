@@ -21,13 +21,17 @@ services:
     build: ./mbsync
     container_name: gmail_stack_mbsync
     restart: unless-stopped
+    # Idle container: the image's own entrypoint.sh loop is bypassed on
+    # purpose. gmail_stack_sync.sh (root cron, host side) is now the sole
+    # caller of mbsync via docker exec - keeps a single, non-overlapping
+    # sync trigger instead of the container's independent internal loop
+    # racing with the cron-driven prune-and-resync pass.
+    entrypoint: ["sleep", "infinity"]
     # Must match Dovecot's userdb uid/gid (dovecot/conf/dovecot.conf) so the
     # Maildir files it writes are actually readable by Dovecot.
     user: "1000:1000"
     networks:
       - gmail_stack_net
-    environment:
-      SYNC_INTERVAL_SECONDS: "900"
     volumes:
       - /srv/gmail_stack/data/maildir:/srv/mail/maildir
       - ./mbsync/conf/.mbsyncrc:/etc/mbsyncrc:ro

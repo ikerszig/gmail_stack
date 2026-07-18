@@ -4,6 +4,13 @@
 # Zabbix agent (running as the unprivileged `zabbix` user) can just cat/awk.
 # Run from ROOT cron every ~15 min — it needs docker + root's borg ssh key.
 #
+# Note: mbsync (Gmail) sync health lives in its own status file, written
+# directly by gmail_stack_sync.sh (which owns the sync+prune run and knows
+# its own outcome firsthand) — see /var/lib/gmail_stack_monitor/sync_status
+# and the gmail_stack.sync_* / gmail_stack.prune_* UserParameters. This
+# script only covers what it can observe independently: Dovecot, the
+# Calendar sync (vdirsyncer), mailbox sizes, and Borg backup health.
+#
 # Deploy: /root/gmail_stack_monitor.sh   (chmod +x)
 # Cron:   */15 * * * * /root/gmail_stack_monitor.sh >/dev/null 2>&1
 set -u
@@ -21,7 +28,6 @@ now=$(date +%s)
 running() {
   [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = "true" ] && echo 1 || echo 0
 }
-sync_running=$(running gmail_stack_mbsync)
 dovecot_running=$(running gmail_stack_dovecot)
 vdirsyncer_running=$(running gmail_stack_vdirsyncer)
 
@@ -33,10 +39,6 @@ sync_age() {
   [ -z "$_e" ] && { echo -1; return; }
   echo $(( (now - _e) / 60 ))
 }
-
-# --- mbsync (Gmail) sync heartbeat + recent failures ---
-sync_age_min=$(sync_age gmail_stack_mbsync)
-sync_fail=$(docker logs --tail 60 gmail_stack_mbsync 2>&1 | grep -c "sync failed" || true)
 
 # --- vdirsyncer (Calendar) sync heartbeat + recent failures ---
 vdirsyncer_age_min=$(sync_age gmail_stack_vdirsyncer)
@@ -78,11 +80,8 @@ fi
 # --- atomic write ---
 {
   echo "updated $now"
-  echo "sync_running $sync_running"
   echo "dovecot_running $dovecot_running"
   echo "vdirsyncer_running $vdirsyncer_running"
-  echo "sync_age_min $sync_age_min"
-  echo "sync_fail $sync_fail"
   echo "vdirsyncer_age_min $vdirsyncer_age_min"
   echo "vdirsyncer_fail $vdirsyncer_fail"
   echo "maildir_size_main $maildir_size_main"

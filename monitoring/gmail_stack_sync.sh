@@ -1,31 +1,38 @@
 #!/bin/sh
-# gmail_stack_prune_orphans.sh
+# gmail_stack_sync.sh
 #
-# mbsync (with "Remove Near" set) will WARN and refuse to auto-delete a
-# local mailbox that has no far-side (Gmail) counterpart anymore, as long
-# as that local copy still has messages in it — a deliberate isync safety
-# guard against silent data loss. In this stack that guard is redundant:
-# the same maildir is Borg-backed nightly, so a local mirror that lags
-# behind Gmail's real folder structure is not actually protecting anything
-# extra, it's just drift. This script closes that gap: it finds those
-# warned-about orphans, independently re-verifies via a direct IMAP call
-# that the far side genuinely has no such box (belt-and-braces, not just
-# trusting mbsync's own message), then removes the stale local copy so
-# the mirror stays a true 1:1 reflection of Gmail's current structure.
+# Sole trigger for Gmail mbsync in this stack: runs the sync, then prunes
+# any orphaned local mailbox mirrors mbsync warned about but wouldn't
+# auto-remove (non-empty "Remove Near" targets), then re-syncs once more.
+# Writes its own status file for Zabbix (see zabbix_gmail_stack.conf) so
+# there's a single, direct source of truth instead of parsing container
+# logs after the fact.
 #
-# Deploy: /root/gmail_stack_prune_orphans.sh   (chmod +x)
-# Cron:   5-59/15 * * * * /root/gmail_stack_prune_orphans.sh >/dev/null 2>&1
-#         (offset from gmail_stack_monitor.sh's */15 so they don't both
-#          hit docker in the same minute)
+# The mbsync container's own internal loop is disabled (docker-compose.yml
+# overrides its command to idle) specifically so this script is the ONLY
+# thing that ever invokes mbsync - avoids any chance of two mbsync runs
+# overlapping and contending for its per-mailbox lock files.
+#
+# Why prune non-empty orphans at all: mbsync (Sync Pull + Remove Near)
+# mirrors Gmail one-directionally, but refuses to auto-delete a stale local
+# mailbox copy that still has messages in it - a sensible default in
+# general, but redundant here since the same maildir is Borg-backed
+# nightly. A non-empty orphan just produces a harmless warning and mbsync
+# still exits 0, so the sync itself never gets stuck - this script closes
+# the remaining drift between the local mirror and Gmail's real structure.
+#
+# Deploy: /root/gmail_stack_sync.sh   (chmod +x)
+# Cron:   */15 * * * * /root/gmail_stack_sync.sh >/dev/null 2>&1
 
 set -u
 
+CONTAINER=gmail_stack_mbsync
 CONFIG_HOST=/opt/stacks/gmail_stack/mbsync/conf/.mbsyncrc
 MAILDIR_ROOT="/srv/gmail_stack/data/maildir/ikerszig@gmail.com"
 LOG_DIR="/var/log/gmail_stack"
-LOG="$LOG_DIR/prune_orphans.log"
+LOG="$LOG_DIR/sync.log"
 STATUS_DIR="/var/lib/gmail_stack_monitor"
-STATUS="$STATUS_DIR/prune_status"
+STATUS="$STATUS_DIR/sync_status"
 MAX_LOG_LINES=2000
 
 mkdir -p "$LOG_DIR" "$STATUS_DIR"
@@ -42,27 +49,42 @@ trim_log() {
 }
 
 write_status() {
+  # $1=sync_running $2=sync_last_ok $3=prune_removed $4=prune_errors
   {
-    echo "prune_last_run $(date +%s)"
-    echo "prune_last_removed $1"
-    echo "prune_last_errors $2"
+    echo "sync_running $1"
+    echo "sync_last_run $(date +%s)"
+    echo "sync_last_ok $2"
+    echo "prune_last_removed $3"
+    echo "prune_last_errors $4"
   } > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
   chmod 644 "$STATUS"
 }
 
-PASS=$(grep '^Pass' "$CONFIG_HOST" | awk '{print $2}')
-if [ -z "$PASS" ]; then
-  log "FATAL: could not read app password from $CONFIG_HOST"
-  write_status 0 1
+log "=== sync run start ==="
+
+RUNNING=$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)
+if [ "$RUNNING" != "true" ]; then
+  log "FATAL: container $CONTAINER is not running"
+  write_status 0 0 0 1
+  trim_log
   exit 1
 fi
 
-log "=== prune-orphans run start ==="
+PASS=$(grep '^Pass' "$CONFIG_HOST" | awk '{print $2}')
+if [ -z "$PASS" ]; then
+  log "FATAL: could not read app password from $CONFIG_HOST"
+  write_status 1 0 0 1
+  trim_log
+  exit 1
+fi
 
-# 1) Run mbsync once, verbosely, to surface any "not empty" warnings.
-OUT=$(docker exec gmail_stack_mbsync mbsync -c /etc/mbsyncrc -a -V 2>&1)
+# 1) Run mbsync verbosely so we can see any "not empty" orphan warnings.
+OUT=$(docker exec "$CONTAINER" mbsync -c /etc/mbsyncrc -a -V 2>&1)
 RC=$?
 log "initial sync exit=$RC"
+if [ "$RC" -ne 0 ]; then
+  log "initial sync output: $OUT"
+fi
 
 # 2) Extract orphan box names from lines like:
 #    "Warning: channel gmail: far side box <NAME> cannot be opened and
@@ -74,10 +96,11 @@ echo "$OUT" | grep -oE 'far side box .* cannot be opened and near side box .* is
 
 if [ ! -s "$ORPHANS_FILE" ]; then
   rm -f "$ORPHANS_FILE"
-  log "no orphans found (sync exit=$RC)"
-  write_status 0 $([ "$RC" -eq 0 ] && echo 0 || echo 1)
+  log "no orphans found"
+  log "=== sync run end: ok=$([ "$RC" -eq 0 ] && echo 1 || echo 0) removed=0 errors=$([ "$RC" -eq 0 ] && echo 0 || echo 1) ==="
+  write_status 1 "$([ "$RC" -eq 0 ] && echo 1 || echo 0)" 0 "$([ "$RC" -eq 0 ] && echo 0 || echo 1)"
   trim_log
-  exit 0
+  [ "$RC" -eq 0 ] && exit 0 || exit 1
 fi
 
 REMOVED=0
@@ -87,7 +110,7 @@ while IFS= read -r BOX; do
   [ -z "$BOX" ] && continue
   log "candidate: $BOX"
 
-  # 3) Independently re-verify via direct IMAP — don't just trust mbsync's
+  # 3) Independently re-verify via direct IMAP - don't just trust mbsync's
   #    own message. Only proceed if the far side genuinely has no such box.
   REMOTE_CHECK=$(python3 -c "
 import imaplib
@@ -132,7 +155,7 @@ rm -f "$ORPHANS_FILE"
 
 # 4) Re-sync so anything that moved lands cleanly at its new path in the
 #    same run, and to confirm the removal actually resolved the warning.
-OUT2=$(docker exec gmail_stack_mbsync mbsync -c /etc/mbsyncrc -a 2>&1)
+OUT2=$(docker exec "$CONTAINER" mbsync -c /etc/mbsyncrc -a 2>&1)
 RC2=$?
 log "post-prune sync exit=$RC2"
 if [ "$RC2" -ne 0 ]; then
@@ -140,9 +163,10 @@ if [ "$RC2" -ne 0 ]; then
   ERRORS=$((ERRORS + 1))
 fi
 
-log "=== prune-orphans run end: removed=$REMOVED errors=$ERRORS ==="
-write_status "$REMOVED" "$ERRORS"
+SYNC_OK=$([ "$RC2" -eq 0 ] && echo 1 || echo 0)
+log "=== sync run end: ok=$SYNC_OK removed=$REMOVED errors=$ERRORS ==="
+write_status 1 "$SYNC_OK" "$REMOVED" "$ERRORS"
 trim_log
 
-[ "$ERRORS" -gt 0 ] && exit 1
-exit 0
+[ "$SYNC_OK" -eq 1 ] && [ "$ERRORS" -eq 0 ] && exit 0
+exit 1

@@ -40,8 +40,8 @@ check_repo_health() {
 }
 
 prune_old_backups() {
-    echo "[INFO] Pruning (keep-daily 7, keep-weekly 4, keep-monthly 6)..."
-    borg prune -v --list "$REPO" --keep-daily 7 --keep-weekly 4 --keep-monthly 6 || record_error "Failed to prune old backups"
+    echo "[INFO] Pruning (keep-daily 7, keep-weekly 8, keep-monthly 24)..."
+    borg prune -v --list "$REPO" --keep-daily 7 --keep-weekly 8 --keep-monthly 24 || record_error "Failed to prune old backups"
 }
 
 backup_gmail_stack() {

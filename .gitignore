@@ -13,3 +13,11 @@ vdirsyncer/conf/config
 # Local data volumes if ever bind-mounted under the repo during local testing
 data/
 *.log
+
+# Editor swap/backup variants of secret files (defense in depth)
+*~
+*.bak-*
+mbsync/conf/.mbsyncrc.bak-*
+vdirsyncer/conf/google_token.json
+radicale/conf/config
+vdirsyncer/conf/status/

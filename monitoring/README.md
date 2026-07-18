@@ -7,9 +7,10 @@ docker/root/borg access is needed at poll time.
 ## Deploy (raspi)
 
 ```sh
-sudo cp /opt/stacks/gmail_stack/monitoring/gmail_stack_monitor.sh     /root/gmail_stack_monitor.sh
-sudo cp /opt/stacks/gmail_stack/monitoring/gmail_stack_borg_check.sh  /root/gmail_stack_borg_check.sh
-sudo chmod +x /root/gmail_stack_monitor.sh /root/gmail_stack_borg_check.sh
+sudo cp /opt/stacks/gmail_stack/monitoring/gmail_stack_monitor.sh        /root/gmail_stack_monitor.sh
+sudo cp /opt/stacks/gmail_stack/monitoring/gmail_stack_borg_check.sh     /root/gmail_stack_borg_check.sh
+sudo cp /opt/stacks/gmail_stack/monitoring/gmail_stack_prune_orphans.sh  /root/gmail_stack_prune_orphans.sh
+sudo chmod +x /root/gmail_stack_monitor.sh /root/gmail_stack_borg_check.sh /root/gmail_stack_prune_orphans.sh
 sudo cp /opt/stacks/gmail_stack/monitoring/zabbix_gmail_stack.conf /etc/zabbix/zabbix_agent2.d/gmail_stack.conf
 
 # first run + agent reload
@@ -20,17 +21,43 @@ sudo systemctl restart zabbix-agent2
 Root crontab:
 
 ```
-*/15 * * * * /root/gmail_stack_monitor.sh >/dev/null 2>&1
-30 8 * * 0   /root/gmail_stack_borg_check.sh >/dev/null 2>&1
+*/15 * * * *    /root/gmail_stack_monitor.sh >/dev/null 2>&1
+5-59/15 * * * * /root/gmail_stack_prune_orphans.sh >/dev/null 2>&1
+30 8 * * 0      /root/gmail_stack_borg_check.sh >/dev/null 2>&1
 ```
 
 Test locally (agent-side):
 
 ```sh
-for k in sync_running dovecot_running sync_age_min sync_fail borg_age_hours borg_check borg_check_age; do
+for k in sync_running dovecot_running sync_age_min sync_fail borg_age_hours borg_check borg_check_age \
+         prune_last_run prune_last_removed prune_last_errors; do
   printf '%s = ' "$k"; sudo -u zabbix zabbix_agent2 -t "gmail_stack.$k" 2>/dev/null | sed -E 's/.*\|(.*)\]/\1/'
 done
 ```
+
+## Orphan pruning (`gmail_stack_prune_orphans.sh`)
+
+`mbsync` mirrors Gmail one-directionally (`Sync Pull` + `Remove Near`). When a
+mailbox disappears or is renamed on the Gmail side (e.g. deleting a folder
+in a client — Gmail actually moves it under `[Gmail]/Trash/<name>` rather
+than destroying it outright), `mbsync` will only auto-remove the stale
+local mirror copy if it's empty. A non-empty stale copy just produces a
+harmless `Warning: ... is not empty` and the run still exits 0 — the sync
+itself never gets stuck, but the local mirror silently drifts from Gmail's
+real structure over time.
+
+`gmail_stack_prune_orphans.sh` closes that gap: every run it re-syncs,
+parses the warning for orphaned box names, independently re-verifies via a
+direct IMAP `SELECT` that the far side really has no such box (not just
+trusting mbsync's message), then removes the stale local copy and re-syncs
+once more. Safe because content isn't actually at risk here — the same
+maildir is Borg-backed nightly (`gmail_stack_borg`), so a pruned local
+mirror folder is never the only copy.
+
+Logs to `/var/log/gmail_stack/prune_orphans.log` (self-trims to the last
+2000 lines) and writes `/var/lib/gmail_stack_monitor/prune_status`, which
+the Zabbix items below read from — same "root cron writes, zabbix user
+just reads" pattern as the rest of this monitoring.
 
 ## Zabbix items (create on the host in the Zabbix UI)
 
@@ -48,6 +75,9 @@ Type **Zabbix agent** (passive), numeric (unsigned/float), update interval 5m:
 | `gmail_stack.borg_age_hours` | age of newest Borg archive (hours) |
 | `gmail_stack.borg_check` | last integrity check: 0 ok / 1 fail / -1 never |
 | `gmail_stack.borg_check_age` | days since last integrity check |
+| `gmail_stack.prune_last_run` | unix epoch of last orphan-prune run |
+| `gmail_stack.prune_last_removed` | orphaned mailboxes removed in the last run |
+| `gmail_stack.prune_last_errors` | prune-script errors in the last run (IMAP re-check mismatch, post-prune resync failure) — 0 in normal operation, including whenever orphans were found and cleanly removed |
 
 ## Suggested triggers
 
@@ -65,6 +95,12 @@ Type **Zabbix agent** (passive), numeric (unsigned/float), update interval 5m:
   (nightly backup at 22:00 → should always be <26h)
 - **Borg integrity fail** (HIGH): `last(/HOST/gmail_stack.borg_check)=1`
 - **Integrity check overdue** (INFO): `last(/HOST/gmail_stack.borg_check_age)>14`
+- **Orphan prune failing** (WARN): `last(/HOST/gmail_stack.prune_last_errors)>0`
+  (IMAP re-check disagreed with mbsync, or the post-prune resync itself failed —
+  investigate `/var/log/gmail_stack/prune_orphans.log`; a normal "found and
+  removed an orphan" run reports 0 errors)
+- **Orphan prune stale** (INFO): `last(/HOST/gmail_stack.prune_last_run)<`now`-3600`
+  (should update every ~15 min via cron)
 
 Note: `-1` means "unknown/not yet collected" — account for it in triggers if
 needed (e.g. `>90` won't fire on `-1`, which is fine; add `and <>-1` where a

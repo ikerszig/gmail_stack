@@ -8,7 +8,7 @@ BASE_LOCAL_BACKUP_DIR="$1"
 TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 
 REMOTE_USER="ikerszig"
-REMOTE_HOST="192.168.1.201"
+REMOTE_HOST="10.9.0.2"
 BASE_REMOTE_BACKUP_DIR="/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
 
 REPO="ssh://${REMOTE_USER}@${REMOTE_HOST}${BASE_REMOTE_BACKUP_DIR}"

@@ -10,7 +10,7 @@ set -u
 
 STATUS_DIR="/var/lib/gmail_stack_monitor"
 BORGCHECK="$STATUS_DIR/borgcheck"
-REPO="ssh://ikerszig@192.168.1.201/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
+REPO="ssh://ikerszig@10.9.0.2/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
 
 mkdir -p "$STATUS_DIR"
 export BORG_PASSPHRASE="$(cat /root/backup/.borg_passphrase 2>/dev/null || true)"

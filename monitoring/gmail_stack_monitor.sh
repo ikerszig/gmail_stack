@@ -19,7 +19,7 @@ STATUS_DIR="/var/lib/gmail_stack_monitor"
 STATUS="$STATUS_DIR/status"
 CACHE="$STATUS_DIR/borg_last_epoch"
 BORGCHECK="$STATUS_DIR/borgcheck"
-REPO="ssh://ikerszig@192.168.1.201/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
+REPO="ssh://ikerszig@10.9.0.2/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
 
 mkdir -p "$STATUS_DIR"
 now=$(date +%s)

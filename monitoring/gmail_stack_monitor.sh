@@ -19,7 +19,7 @@ STATUS_DIR="/var/lib/gmail_stack_monitor"
 STATUS="$STATUS_DIR/status"
 CACHE="$STATUS_DIR/borg_last_epoch"
 BORGCHECK="$STATUS_DIR/borgcheck"
-REPO="ssh://ikerszig@10.9.0.2/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
+REPO="ssh://ikerszig@esgpi-borg/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
 
 mkdir -p "$STATUS_DIR"
 now=$(date +%s)
@@ -40,9 +40,50 @@ sync_age() {
   echo $(( (now - _e) / 60 ))
 }
 
-# --- vdirsyncer (Calendar) sync heartbeat + recent failures ---
+# --- vdirsyncer (Calendar) sync heartbeat + consecutive-failure tracking ---
+# vdirsyncer_fail is a persistent consecutive-failure counter, NOT a raw
+# grep count over a log tail - a tail-based count kept showing old,
+# already-resolved failures until they scrolled out of the window (seen
+# 2026-07-23: OAuth token was fixed and syncs succeeded again, but the
+# trigger stayed active for ~an hour because stale "sync failed" lines
+# were still inside the last 60 log lines).
+#
+# Instead: each run looks only at the outcome of the most recently
+# STARTED sync cycle. A cycle already accounted for (same start marker as
+# last run) is left untouched; a newly-observed cycle increments the
+# counter on failure or resets it to 0 on success.
 vdirsyncer_age_min=$(sync_age gmail_stack_vdirsyncer)
-vdirsyncer_fail=$(docker logs --tail 60 gmail_stack_vdirsyncer 2>&1 | grep -c "sync failed" || true)
+
+VDIR_STATE="$STATUS_DIR/vdirsyncer_fail_state"
+VDIR_LOGS=$(docker logs --tail 200 gmail_stack_vdirsyncer 2>&1)
+last_start_line=$(echo "$VDIR_LOGS" | grep -n "sync start:" | tail -1 | cut -d: -f1)
+
+prev_start_ts=""
+prev_count=0
+if [ -f "$VDIR_STATE" ]; then
+  prev_start_ts=$(awk '/^last_start_ts /{print $2}' "$VDIR_STATE")
+  prev_count=$(awk '/^fail_count /{print $2}' "$VDIR_STATE")
+  [ -z "$prev_count" ] && prev_count=0
+fi
+
+if [ -n "$last_start_line" ]; then
+  cur_start_ts=$(echo "$VDIR_LOGS" | sed -n "${last_start_line}p" | sed -E 's/.*sync start: //')
+  if [ "$cur_start_ts" = "$prev_start_ts" ]; then
+    vdirsyncer_fail=$prev_count
+  else
+    if echo "$VDIR_LOGS" | tail -n "+$last_start_line" | grep -q "sync failed"; then
+      vdirsyncer_fail=$((prev_count + 1))
+    else
+      vdirsyncer_fail=0
+    fi
+    {
+      echo "last_start_ts $cur_start_ts"
+      echo "fail_count $vdirsyncer_fail"
+    } > "$VDIR_STATE.tmp" && mv "$VDIR_STATE.tmp" "$VDIR_STATE"
+  fi
+else
+  vdirsyncer_fail=$prev_count
+fi
 
 # --- mailbox sizes (bytes) for trend graphs / sudden-drop alerting ---
 maildir_bytes() {
@@ -56,6 +97,7 @@ maildir_size_save=$(maildir_bytes "/srv/gmail_stack/data/maildir/ikerszig_save@i
 # --- newest borg archive age (hours), cached so a transient borg/ssh
 #     hiccup keeps the last-known-good value instead of a false -1 ---
 export BORG_PASSPHRASE="$(cat /root/backup/.borg_passphrase 2>/dev/null || true)"
+export BORG_RELOCATED_REPO_ACCESS_IS_OK=yes
 name=$(timeout 60 borg list "$REPO" --last 1 --short 2>/dev/null || true)
 if [ -n "$name" ]; then
   dt=$(echo "$name" | sed -E 's/^gmail_stack-([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})$/\1 \2:\3:\4/')

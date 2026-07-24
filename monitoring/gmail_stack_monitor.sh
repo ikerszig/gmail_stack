@@ -2,7 +2,9 @@
 # gmail_stack_monitor.sh
 # Collects health metrics into a fast, world-readable status file that the
 # Zabbix agent (running as the unprivileged `zabbix` user) can just cat/awk.
-# Run from ROOT cron every ~15 min — it needs docker + root's borg ssh key.
+# Run from ROOT cron every ~15 min — it needs docker. Borg archive freshness
+# is no longer probed live here; gmail_stack_borg.sh (the nightly backup)
+# writes it directly, see the borg_age_hours block below.
 #
 # Note: mbsync (Gmail) sync health lives in its own status file, written
 # directly by gmail_stack_sync.sh (which owns the sync+prune run and knows
@@ -19,7 +21,6 @@ STATUS_DIR="/var/lib/gmail_stack_monitor"
 STATUS="$STATUS_DIR/status"
 CACHE="$STATUS_DIR/borg_last_epoch"
 BORGCHECK="$STATUS_DIR/borgcheck"
-REPO="ssh://ikerszig@esgpi-borg/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
 
 mkdir -p "$STATUS_DIR"
 now=$(date +%s)
@@ -94,16 +95,13 @@ maildir_size_save=$(maildir_bytes "/srv/gmail_stack/data/maildir/ikerszig_save@i
 [ -z "$maildir_size_main" ] && maildir_size_main=0
 [ -z "$maildir_size_save" ] && maildir_size_save=0
 
-# --- newest borg archive age (hours), cached so a transient borg/ssh
-#     hiccup keeps the last-known-good value instead of a false -1 ---
-export BORG_PASSPHRASE="$(cat /root/backup/.borg_passphrase 2>/dev/null || true)"
-export BORG_RELOCATED_REPO_ACCESS_IS_OK=yes
-name=$(timeout 60 borg list "$REPO" --last 1 --short 2>/dev/null || true)
-if [ -n "$name" ]; then
-  dt=$(echo "$name" | sed -E 's/^gmail_stack-([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})$/\1 \2:\3:\4/')
-  be=$(date -d "$dt" +%s 2>/dev/null || true)
-  [ -n "$be" ] && echo "$be" > "$CACHE"
-fi
+# --- newest borg archive age (hours) ---
+# Event-driven, not polled: gmail_stack_borg.sh (the nightly backup itself,
+# 22:00) writes $CACHE the moment a backup succeeds - it's the one that
+# actually knows the outcome firsthand. Backups only happen once a day, so
+# probing Borg over SSH every ~15 min here just to check for a once-a-day
+# event was 96 needless esgpi connections for 1 real change (fixed
+# 2026-07-24, see osszefoglalo.md 2.9).
 borg_age_hours=-1
 if [ -f "$CACHE" ]; then
   be=$(cat "$CACHE")

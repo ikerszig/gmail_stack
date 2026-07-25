@@ -8,6 +8,7 @@ secrets/*.json
 dovecot/conf/passwd
 radicale/conf/users
 mbsync/conf/.mbsyncrc
+mbsync/conf/.alexmed_password
 vdirsyncer/conf/config
 
 # Local data volumes if ever bind-mounted under the repo during local testing

@@ -35,6 +35,7 @@ services:
     volumes:
       - /srv/gmail_stack/data/maildir:/srv/mail/maildir
       - ./mbsync/conf/.mbsyncrc:/etc/mbsyncrc:ro
+      - ./mbsync/conf/.alexmed_password:/etc/mbsync_alexmed_password:ro
     depends_on:
       - dovecot
 

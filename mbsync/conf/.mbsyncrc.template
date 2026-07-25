@@ -30,3 +30,36 @@ Create Near
 SyncState *
 # One-directional mirror: never push local changes back to Gmail.
 Sync Pull
+
+# ---------------------------------------------------------------------
+# Second (or further) mailbox, plain IMAP + password (not Gmail, no App
+# Password needed). Password lives in its own file, not inline here, so
+# it can be dropped in separately - see docker-compose.yml's volume mount
+# for mbsync-sync and PassCmd below. `mbsync -a` (already used by
+# gmail_stack_sync.sh) picks up every Channel automatically, no script
+# changes needed to sync a newly-added account.
+# ---------------------------------------------------------------------
+IMAPAccount alexmed
+Host mail.maxer.hu
+User kszocsik@alexmed.hu
+PassCmd "cat /etc/mbsync_alexmed_password"
+SSLType IMAPS
+AuthMechs LOGIN
+
+IMAPStore alexmed-remote
+Account alexmed
+
+MaildirStore alexmed-local
+Path /srv/mail/maildir/kszocsik@alexmed.hu/
+Inbox /srv/mail/maildir/kszocsik@alexmed.hu/INBOX
+SubFolders Verbatim
+
+Channel alexmed
+Far :alexmed-remote:
+Near :alexmed-local:
+Patterns *
+Create Near
+SyncState *
+# One-directional mirror, same as gmail: this is a backup copy, not a
+# two-way client - never push local changes back to the real mailbox.
+Sync Pull

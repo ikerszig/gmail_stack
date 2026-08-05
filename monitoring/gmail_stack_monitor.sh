@@ -2,9 +2,7 @@
 # gmail_stack_monitor.sh
 # Collects health metrics into a fast, world-readable status file that the
 # Zabbix agent (running as the unprivileged `zabbix` user) can just cat/awk.
-# Run from ROOT cron every ~15 min — it needs docker. Borg archive freshness
-# is no longer probed live here; gmail_stack_borg.sh (the nightly backup)
-# writes it directly, see the borg_age_hours block below.
+# Run from ROOT cron every ~15 min — it needs docker + root's borg ssh key.
 #
 # Note: mbsync (Gmail) sync health lives in its own status file, written
 # directly by gmail_stack_sync.sh (which owns the sync+prune run and knows
@@ -21,6 +19,7 @@ STATUS_DIR="/var/lib/gmail_stack_monitor"
 STATUS="$STATUS_DIR/status"
 CACHE="$STATUS_DIR/borg_last_epoch"
 BORGCHECK="$STATUS_DIR/borgcheck"
+REPO="ssh://ikerszig@192.168.1.201/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
 
 mkdir -p "$STATUS_DIR"
 now=$(date +%s)
@@ -41,50 +40,9 @@ sync_age() {
   echo $(( (now - _e) / 60 ))
 }
 
-# --- vdirsyncer (Calendar) sync heartbeat + consecutive-failure tracking ---
-# vdirsyncer_fail is a persistent consecutive-failure counter, NOT a raw
-# grep count over a log tail - a tail-based count kept showing old,
-# already-resolved failures until they scrolled out of the window (seen
-# 2026-07-23: OAuth token was fixed and syncs succeeded again, but the
-# trigger stayed active for ~an hour because stale "sync failed" lines
-# were still inside the last 60 log lines).
-#
-# Instead: each run looks only at the outcome of the most recently
-# STARTED sync cycle. A cycle already accounted for (same start marker as
-# last run) is left untouched; a newly-observed cycle increments the
-# counter on failure or resets it to 0 on success.
+# --- vdirsyncer (Calendar) sync heartbeat + recent failures ---
 vdirsyncer_age_min=$(sync_age gmail_stack_vdirsyncer)
-
-VDIR_STATE="$STATUS_DIR/vdirsyncer_fail_state"
-VDIR_LOGS=$(docker logs --tail 200 gmail_stack_vdirsyncer 2>&1)
-last_start_line=$(echo "$VDIR_LOGS" | grep -n "sync start:" | tail -1 | cut -d: -f1)
-
-prev_start_ts=""
-prev_count=0
-if [ -f "$VDIR_STATE" ]; then
-  prev_start_ts=$(awk '/^last_start_ts /{print $2}' "$VDIR_STATE")
-  prev_count=$(awk '/^fail_count /{print $2}' "$VDIR_STATE")
-  [ -z "$prev_count" ] && prev_count=0
-fi
-
-if [ -n "$last_start_line" ]; then
-  cur_start_ts=$(echo "$VDIR_LOGS" | sed -n "${last_start_line}p" | sed -E 's/.*sync start: //')
-  if [ "$cur_start_ts" = "$prev_start_ts" ]; then
-    vdirsyncer_fail=$prev_count
-  else
-    if echo "$VDIR_LOGS" | tail -n "+$last_start_line" | grep -q "sync failed"; then
-      vdirsyncer_fail=$((prev_count + 1))
-    else
-      vdirsyncer_fail=0
-    fi
-    {
-      echo "last_start_ts $cur_start_ts"
-      echo "fail_count $vdirsyncer_fail"
-    } > "$VDIR_STATE.tmp" && mv "$VDIR_STATE.tmp" "$VDIR_STATE"
-  fi
-else
-  vdirsyncer_fail=$prev_count
-fi
+vdirsyncer_fail=$(docker logs --tail 60 gmail_stack_vdirsyncer 2>&1 | grep -c "sync failed" || true)
 
 # --- mailbox sizes (bytes) for trend graphs / sudden-drop alerting ---
 maildir_bytes() {
@@ -95,13 +53,20 @@ maildir_size_save=$(maildir_bytes "/srv/gmail_stack/data/maildir/ikerszig_save@i
 [ -z "$maildir_size_main" ] && maildir_size_main=0
 [ -z "$maildir_size_save" ] && maildir_size_save=0
 
-# --- newest borg archive age (hours) ---
-# Event-driven, not polled: gmail_stack_borg.sh (the nightly backup itself,
-# 22:00) writes $CACHE the moment a backup succeeds - it's the one that
-# actually knows the outcome firsthand. Backups only happen once a day, so
-# probing Borg over SSH every ~15 min here just to check for a once-a-day
-# event was 96 needless esgpi connections for 1 real change (fixed
-# 2026-07-24, see osszefoglalo.md 2.9).
+# --- newest borg archive age (hours), cached so a transient borg/ssh
+#     hiccup keeps the last-known-good value instead of a false -1 ---
+# A jelmondat egyetlen kozos helyrol jon (2026-08-06). Korabban ket kulon
+# fajl volt ugyanarra az ertekre (/root/backup/.borg_passphrase es a
+# scriptekbe beleirt valtozat) - ket forras egy titokra azt jelenti, hogy
+# cserenel az egyiket biztosan elfelejtjuk. A /root/.borg_passphrase ki van
+# zarva a mentesbol, a regi NEM volt az.
+. /root/.borg_passphrase
+name=$(timeout 60 borg list "$REPO" --last 1 --short 2>/dev/null || true)
+if [ -n "$name" ]; then
+  dt=$(echo "$name" | sed -E 's/^gmail_stack-([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{2})-([0-9]{2})-([0-9]{2})$/\1 \2:\3:\4/')
+  be=$(date -d "$dt" +%s 2>/dev/null || true)
+  [ -n "$be" ] && echo "$be" > "$CACHE"
+fi
 borg_age_hours=-1
 if [ -f "$CACHE" ]; then
   be=$(cat "$CACHE")

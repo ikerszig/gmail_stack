@@ -10,10 +10,15 @@ set -u
 
 STATUS_DIR="/var/lib/gmail_stack_monitor"
 BORGCHECK="$STATUS_DIR/borgcheck"
-REPO="ssh://ikerszig@10.9.0.2/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
+REPO="ssh://ikerszig@192.168.1.201/home/ikerszig/RaspiSystemBackups/gmail_stack_borg"
 
 mkdir -p "$STATUS_DIR"
-export BORG_PASSPHRASE="$(cat /root/backup/.borg_passphrase 2>/dev/null || true)"
+# A jelmondat egyetlen kozos helyrol jon (2026-08-06). Korabban ket kulon
+# fajl volt ugyanarra az ertekre (/root/backup/.borg_passphrase es a
+# scriptekbe beleirt valtozat) - ket forras egy titokra azt jelenti, hogy
+# cserenel az egyiket biztosan elfelejtjuk. A /root/.borg_passphrase ki van
+# zarva a mentesbol, a regi NEM volt az.
+. /root/.borg_passphrase
 now=$(date +%s)
 
 if timeout 7200 borg check "$REPO" >/tmp/gmail_stack_borgcheck.log 2>&1; then

@@ -6,8 +6,17 @@ services:
     networks:
       gmail_stack_net:
         ipv4_address: 172.28.0.10
-    # Bound to the LAN interface IP only — never published on tun0/other
-    # interfaces, regardless of what nftables rules exist. See README.md.
+    # Publikalva a LAN-interfesz cimere (192.168.1.25), NEM 0.0.0.0-ra - igy a
+    # WAN felol semmikeppen nem erheto el, meg egy elrontott nftables-szabaly
+    # eseten sem.
+    #
+    # PONTOSITAS (2026-08-05): a korabbi komment azt allitotta, hogy ez a
+    # kotes a "tun0/egyeb interfeszek" felol is kizarja az elerest. EZ NEM IGAZ.
+    # A wg0 (WireGuard) felol a 192.168.1.25-re cimzett csomag helyi kezbesites
+    # utjan megerkezik ehhez a sockethez - epp ezert mukodik az IMAP a
+    # telefonrol VPN-en at, ami most kifejezetten szandekos. A VPN-es eleres
+    # tehat NEM veletlen resz, hanem a mukodes resze; a hozzaferest az nftables
+    # (10.9.0.0/24 accept) es a "dovecot" fail2ban jail szabalyozza.
     ports:
       - "192.168.1.25:993:993"
     volumes:

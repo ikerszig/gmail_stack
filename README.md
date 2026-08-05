@@ -119,23 +119,59 @@ Egyszeri próbafuttatás a cronra várás nélkül:
 sudo sh /root/backup/modules/gmail_stack_borg.sh /home/backup/SystemBackups
 ```
 
-### 9. Kliens-oldali elérés (a ténylegesen alkalmazott megoldás)
+### 9. Kliens-oldali elérés (2026-08-05 óta: helyi DNS + WireGuard)
 
-Nincs Pi-hole/helyi DNS a hálózaton, és a router sem tud helyi DNS-bejegyzést —
-csak WAN port-forwardot. Ezért a végső megoldás **993-forward + tűzfal
-source-IP szűrés**, NEM hosts-bejegyzés:
+> **Ez a szakasz 2026-08-05-én teljesen átíródott.** A korábbi leírás azt
+> állította, hogy a router NAT-hairpinje LAN forrás-IP-t mutat a raspinak, és
+> hogy ezen múlik a mobil-elérés. **Ez méréssel cáfolt** — lásd lent.
 
-- **Router:** `WAN 993 → 192.168.1.25:993` port-forward.
-- **Tűzfal:** a `tcp dport 993 drop` szabály (a LAN-accept után, a geoip-allow
-  előtt) a nem-LAN forgalmat eldobja. Lásd `firewall/nftables-snippet.md`.
+#### A tényleges viselkedés (mérve, nem feltételezve)
 
-Így a kliens a `ikermail.ddns.net`-et a publikus IP-re oldja fel, és:
-- **Otthoni WiFi-n:** a router NAT-hairpinje visszafordítja a Dovecothoz, a
-  raspi **LAN forrás-IP-t** lát (router `.1` vagy az eszköz `.x`), a tűzfal
-  átengedi, a cert a névre szól → működik, hosts/DNS/root nélkül, mobilon is.
-- **Otthoni WiFi-n kívül (mobilnet):** a forrás valós internetes IP → a tűzfal
-  eldobja → nem elérhető. A "csak LAN source" és a "mobilneten is menjen"
-  egymást kizárja; ez a tudatos kompromisszum (LAN-only marad).
+A router hairpinel ugyan, de közben **SNAT-ol a saját WAN-címére**. Ugyanabból
+a másodpercből az Apache-naplóban:
+
+```
+ikermail.ddns.net:443 37.76.120.99  ... "GET /mail/" 403   ← hairpin út
+ikermail.ddns.net:443 192.168.1.45  ... "GET /mail/" 200   ← közvetlen LAN
+```
+
+Vagyis a raspi a hairpinelt LAN-forgalmat **nem tudja megkülönböztetni** egy
+valódi internetes kéréstől. A régi „993-forward + source-IP szűrés" terv ezért
+nem is működhetett volna — és a 48 órás tűzfal-naplóban valóban **nulla**
+találat volt a 993-as portra a WAN felől.
+
+#### Amin ezen felül elbukott (és amit senki nem vett észre)
+
+A `docker-compose.yml` deklarálta a `ports: - "192.168.1.25:993:993"` sort, de
+a **futó konténer port-publish nélkül jött létre** (elavult
+`com.docker.compose.config-hash`): a hoston **semmi nem figyelt a 993-on**.
+A Dovecot a konténeren belül rendben figyelt, kívülről viszont nem volt mihez
+csatlakozni. Egy `docker compose up -d dovecot` oldotta meg.
+
+**Tanulság**: ha a compose-ban benne van egy port, az még nem jelenti, hogy a
+futó konténeren is rajta van. Ellenőrzés:
+`docker inspect <c> --format '{{json .NetworkSettings.Ports}}'`.
+
+#### A mostani megoldás
+
+**Helyi split-horizon DNS** (AdGuard Home a raspin, `192.168.1.25` és
+`10.9.0.1` címeken) az `ikermail.ddns.net`-et a **LAN-IP-re** oldja fel. A név
+változatlan marad, ezért a Let's Encrypt tanúsítvány továbbra is illeszkedik —
+IMAPS-nél ez kritikus, nyers IP-vel a levelezőkliens cert-hibát dobna.
+
+| Eszköz | Hogyan kapja a helyes feloldást |
+|---|---|
+| Android | WireGuard tunnel `DNS = 10.9.0.1` — otthon és mobilneten egyaránt |
+| Windows | ugyanígy a tunnelen; tunnel nélkül a Wi-Fi adapter DNS-e (`192.168.1.25`) |
+
+⚠️ **Publikus DNS-t SOHA ne adj meg másodlagosnak** a kliensen. Split-horizonnál
+az ugyanarra a névre *más* választ ad; a Windows pedig rendszeresen a
+másodlagost kérdezi (nem csak az elsődleges kiesésekor). 2026-08-05-én egy
+`1.1.1.1` másodlagos pontosan ezért okozott szórványos 403-akat.
+
+**Külső elérés**: a levelezés LAN + VPN-ről érhető el (`Require ip` a vhoston,
+`10.9.0.0/24` is engedve). Mobilneten a WireGuard tunnelen keresztül működik —
+nincs szükség 993-as port-forwardra, tehát az IMAP **soha nem néz a netre**.
 
 **Avast/AV buktató (Windows):** ha a kliensgépen fut Avast (vagy hasonló AV)
 Mail/Web Shield SSL-szkenneléssel, az MITM-eli az IMAPS-kapcsolatot és a saját
@@ -171,7 +207,12 @@ automatikusan lementi — nincs külön teendő.
 - Roundcube: `https://ikermail.ddns.net/mail/` böngészőből, LAN-ról
 - Radicale: naptár-app hozzáadása CalDAV fiókként,
   `https://ikermail.ddns.net/radicale/REPLACE_WITH_USERNAME/` URL-lel
-- Külső hálózatról (mobilnet, WiFi kikapcsolva) próbáld elérni
-  `https://ikermail.ddns.net/mail/`-t — 403-at kell kapnod (LAN-only ellenőrzés)
+- Külső hálózatról (mobilnet, WiFi kikapcsolva, **WireGuard nélkül**) próbáld
+  elérni `https://ikermail.ddns.net/mail/`-t — 403-at kell kapnod
+- Ugyanaz **WireGuard tunnellel**: 200-at kell kapnod (a `Require ip` a
+  `10.9.0.0/24`-et is engedi)
+- Dovecot-napló (2026-08-05 óta van egyáltalán):
+  `docker logs gmail_stack_dovecot` — a sikeres bejelentkezés `rip=` mezője
+  mutatja a valódi forrás-IP-t (VPN-ről `10.9.0.4`, LAN-ról `192.168.1.x`)
 - `docker compose logs mbsync-sync` / `vdirsyncer-sync` — sikeres
   szinkron-ciklusok látszanak, nem crash-loop

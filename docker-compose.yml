@@ -16,6 +16,10 @@ services:
       - ./dovecot/conf/passwd:/etc/dovecot/passwd:ro
       - /etc/letsencrypt/live/ikermail.ddns.net:/etc/letsencrypt/live/ikermail.ddns.net:ro
       - /etc/letsencrypt/archive/ikermail.ddns.net:/etc/letsencrypt/archive/ikermail.ddns.net:ro
+      # Dovecot naplo a hostra (2026-08-05) - a fail2ban "dovecot" jail ezt
+      # tail-eli. A konteiner stdout-ja nem alkalmas ra: az uj konteiner-ID-vel
+      # utvonalat valt, tehat a jail eltorne minden ujraletrehozasnal.
+      - /var/log/dovecot:/var/log/dovecot
 
   mbsync-sync:
     build: ./mbsync

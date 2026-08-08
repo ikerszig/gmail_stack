@@ -96,6 +96,13 @@ services:
       # occasionally get renamed between image versions.
     volumes:
       - /srv/gmail_stack/data/roundcube-db:/var/roundcube/db
+      # 2026-08-08: sikertelen bejelentkezesek naplozasa fail2ban-hoz.
+      # A kepkezelo minden /var/roundcube/config/*.php-t automatikusan
+      # include-ol induláskor (docker-entrypoint.sh) - ez a hivatalos
+      # bovitesi pont, nem kell a teljes config.inc.php-t felulirni.
+      - /srv/gmail_stack/data/roundcube-config:/var/roundcube/config:ro
+      # A 10-fail2ban.php log_driver='file'-ra allitja, ez a celkonyvtar.
+      - /var/log/roundcube:/var/www/html/logs
     depends_on:
       - dovecot
 

@@ -200,6 +200,48 @@ automatikusan lementi — nincs külön teendő.
 `chown 1000:1000`-rel. Dovecot-restart nem kell (passwd-file minden auth-nál
 újraolvasva).
 
+### 10. Roundcube: sikertelen bejelentkezes naplozasa fail2ban-hoz (2026-08-08)
+
+Alapertelmezetten a Roundcube **semmit nem naplozott**: `log_logins = false`
+es `log_driver = 'stdout'` (a hivatalos Docker kep alapertelmezese), tehat
+sikertelen bejelentkezesrol sehol nem maradt nyom.
+
+**Megoldas**: `roundcube/config/10-fail2ban.php` — a hivatalos kepkezelo
+(`docker-entrypoint.sh`) minden `/var/roundcube/config/*.php` fajlt
+automatikusan `include()`-ol induláskor, ez a dokumentalt bovitesi pont, nem
+kell a teljes `config.inc.php`-t felulirni. A fajl `log_driver`-t `file`-ra
+allitja es `log_logins`-t bekapcsolja; a `docker-compose.yml` bind-mountolja
+`/srv/gmail_stack/data/roundcube-config` (a config fajl) es `/var/log/roundcube`
+(a naplo maga) konyvtarakat.
+
+**⚠️ Biztonsagi reszlet, elo teszttel felfedve**: a Roundcube naplosora
+mindig `REMOTE_ADDR (X-Forwarded-For: ...)` formatumu (fix, nem
+konfiguralhato — l. `rcube_utils::remote_ip()`). A `REMOTE_ADDR` itt **mindig**
+a Docker-halozat gateway-cime (`172.28.0.1`, az Apache proxy felol erkezo
+kapcsolat latszolagos forrasa) — a valodi kliens cime a zarojelben van.
+
+Az `X-Forwarded-For` fejlec viszont **hamisithato**: egy kliens sajat maga is
+kuldhet ilyen fejlecet. Elo teszttel igazolva: egy sajat kezzel kuldott
+`X-Forwarded-For: 6.6.6.6` fejlecre a naplo
+`(X-Forwarded-For: 6.6.6.6, 192.168.1.25)`-ot irt — **Apache nem cserelte le**
+a hamisitott erteket, hanem **hozzafuzte** a valodi cimet a lista **vegehez**
+(mod_proxy alapviselkedes). A fail2ban-szuro (`RaspiBackup/fail2ban/filter.d/
+roundcube.conf`) ezert mindig az **utolso** IP-t veszi a listabol — ha az
+elsot venne, barki barmilyen artatlan IP-t kitilthatna (fail2ban-alapu
+DoS sajat magunk ellen). Elo teszttel megerositve: a spoofolt `6.6.6.6` sehol
+nem kerult be egyetlen `f2b_*` setbe sem, csak a valodi `192.168.1.25`.
+
+Ez ugyanaz a mintazat, mint a korabbi Zabbix (`WEB_REAL_IP_FROM`) es
+Vaultwarden (`TRUSTED_PROXIES`) root-cause javitasok: reverse proxy mogott a
+kliens-IP sosem magatol ertetodo, mindig elo teszttel, hamisitott fejleccel
+is le kell ellenorizni.
+
+**A jail (`RaspiBackup/fail2ban/jail.d/roundcube.conf`) elovigyazatossagi
+jellegu**: a webmail ma csak LAN+VPN-rol erheto el (2026-08-06-i
+szigoritas), tehat kivulrol ma nem tamadhato — de "ha egyszer ki lesz nyitva,
+mukodjon" (felhasznaloi keres). Elo ban-teszttel igazolva: 5 sikertelen
+probalkozas → tiltas → az IP bekerult az `f2b_roundcube` setbe → feloldva.
+
 ## Ellenőrzés
 
 - `openssl s_client -connect 192.168.1.25:993 -servername ikermail.ddns.net`

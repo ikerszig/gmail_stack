@@ -106,6 +106,24 @@ services:
     depends_on:
       - dovecot
 
+  # 2026-11-09: saját Cloudflare Tunnel (ikermail.kerszig.hu) - KIZÁRÓLAG
+  # a Roundcube webmailt (http://roundcube:80) célozza, konténernéven, a
+  # SAJÁT hálózaton belül - a Dovecot (nyers IMAP, 993) SZÁNDÉKOSAN
+  # NINCS ezen a tunnelen, az LAN+VPN-only marad (l. a dovecot service
+  # fenti kommentjét - ez egy tudatos biztonsági döntés, NEM szabad
+  # megváltoztatni). A régi ikermail.ddns.net (Apache, /mail/ prefix)
+  # PÁRHUZAMOSAN, érintetlenül megy tovább.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-ikermail
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      gmail_stack_net:
+        ipv4_address: 172.28.0.40
+
 networks:
   gmail_stack_net:
     driver: bridge
